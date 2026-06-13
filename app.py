@@ -3,16 +3,31 @@ WRHL Gamesheet Processor — Flask Dashboard
 """
 
 import os
-import json
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, send_from_directory
 from mock_pipeline import FAKE_EMAILS, SCHEDULE, run_pipeline
 
-app = Flask(__name__)
+_base = os.path.dirname(os.path.abspath(__file__))
+_tmpl = "templates" if os.path.isdir(os.path.join(_base, "templates")) else "template"
+
+app = Flask(__name__, template_folder=_tmpl)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB upload limit
 
-# /tmp is the only writable directory on Vercel serverless; fall back to local uploads/ otherwise
-UPLOAD_FOLDER = "/tmp/wrhl_uploads" if os.path.exists("/tmp") else os.path.join(os.path.dirname(__file__), "uploads")
+UPLOAD_FOLDER = "/tmp/wrhl_uploads" if os.path.exists("/tmp") else os.path.join(_base, "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+
+def _render(**kwargs):
+    try:
+        return render_template("index.html", **kwargs)
+    except Exception:
+        return render_template("index", **kwargs)
+
+
+@app.route("/static/wrhl-logo.png")
+def serve_logo():
+    static_dir = os.path.join(_base, "static")
+    name = "wrhl-logo.png" if os.path.exists(os.path.join(static_dir, "wrhl-logo.png")) else "logo"
+    return send_from_directory(static_dir, name)
 
 
 def get_dashboard_data():
@@ -52,12 +67,6 @@ def get_dashboard_data():
 
 
 def mock_analyse(digital_name, photo_name):
-    """
-    Mock AI analysis — simulates comparing a digital PDF gamesheet
-    against a physical photo gamesheet and returning discrepancies.
-    Replace this function body with real Claude API calls once you
-    have an ANTHROPIC_API_KEY.
-    """
     return {
         "digital_file": digital_name,
         "photo_file": photo_name,
@@ -97,10 +106,9 @@ def mock_analyse(digital_name, photo_name):
 @app.route("/")
 def index():
     data = get_dashboard_data()
-    submitted   = sum(1 for g in SCHEDULE if g["submitted"])
-    missing     = sum(1 for g in SCHEDULE if not g["submitted"])
-    return render_template(
-        "index.html",
+    submitted = sum(1 for g in SCHEDULE if g["submitted"])
+    missing   = sum(1 for g in SCHEDULE if not g["submitted"])
+    return _render(
         data=data,
         analysis=None,
         upload_errors=[],
@@ -124,22 +132,26 @@ def analyse():
 
     if errors:
         data = get_dashboard_data()
-        return render_template("index.html", data=data, analysis=None, upload_errors=errors)
+        submitted = sum(1 for g in SCHEDULE if g["submitted"])
+        missing   = sum(1 for g in SCHEDULE if not g["submitted"])
+        return _render(
+            data=data,
+            analysis=None,
+            upload_errors=errors,
+            schedule=SCHEDULE,
+            schedule_submitted=submitted,
+            schedule_missing=missing,
+            bulk_results=[],
+        )
 
-    # Save uploads
-    digital_path = os.path.join(UPLOAD_FOLDER, digital.filename)
-    photo_path   = os.path.join(UPLOAD_FOLDER, photo.filename)
-    digital.save(digital_path)
-    photo.save(photo_path)
-
-    # Run analysis (mock for now — swap in Claude API here)
+    digital.save(os.path.join(UPLOAD_FOLDER, digital.filename))
+    photo.save(os.path.join(UPLOAD_FOLDER, photo.filename))
     result = mock_analyse(digital.filename, photo.filename)
 
     data = get_dashboard_data()
     submitted = sum(1 for g in SCHEDULE if g["submitted"])
     missing   = sum(1 for g in SCHEDULE if not g["submitted"])
-    return render_template(
-        "index.html",
+    return _render(
         data=data,
         analysis=result,
         upload_errors=[],
@@ -152,27 +164,25 @@ def analyse():
 
 @app.route("/bulk", methods=["POST"])
 def bulk():
-    # Collect which games had both files uploaded
     processed = []
     for game in SCHEDULE:
-        gid = game["game_id"]
+        gid     = game["game_id"]
         digital = request.files.get(f"digital_{gid}")
         photo   = request.files.get(f"photo_{gid}")
         if digital and digital.filename and photo and photo.filename:
             digital.save(os.path.join(UPLOAD_FOLDER, digital.filename))
             photo.save(os.path.join(UPLOAD_FOLDER, photo.filename))
             result = mock_analyse(digital.filename, photo.filename)
-            result["game_id"]   = gid
-            result["matchup"]   = f"{game['home_team']} vs {game['away_team']}"
-            result["date"]      = game["date"]
-            result["referee"]   = game["referee"]
+            result["game_id"] = gid
+            result["matchup"] = f"{game['home_team']} vs {game['away_team']}"
+            result["date"]    = game["date"]
+            result["referee"] = game["referee"]
             processed.append(result)
 
     data = get_dashboard_data()
     submitted = sum(1 for g in SCHEDULE if g["submitted"])
     missing   = sum(1 for g in SCHEDULE if not g["submitted"])
-    return render_template(
-        "index.html",
+    return _render(
         data=data,
         analysis=None,
         upload_errors=[],
