@@ -10,7 +10,8 @@ from mock_pipeline import FAKE_EMAILS, SCHEDULE, run_pipeline
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 16 * 1024 * 1024  # 16 MB upload limit
 
-UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), "uploads")
+# /tmp is the only writable directory on Vercel serverless; fall back to local uploads/ otherwise
+UPLOAD_FOLDER = "/tmp/wrhl_uploads" if os.path.exists("/tmp") else os.path.join(os.path.dirname(__file__), "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 
